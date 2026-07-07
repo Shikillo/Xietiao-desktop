@@ -468,6 +468,60 @@ $("menu-trash").addEventListener("click", () => {
   openDialog("dlg-trash");
 });
 
+// --- Todoist (envía pendientes y trae las completadas allí) ---------------------------
+
+$("menu-todoist").addEventListener("click", () => {
+  $("todoist-token").value = store.todoist_token ?? "";
+  openDialog("dlg-todoist");
+});
+
+$("todoist-save").addEventListener("click", async () => {
+  await call("set_todoist_token", { token: $("todoist-token").value });
+  setStatus(store.todoist_token ? "Token de Todoist guardado" : "Token de Todoist borrado");
+});
+
+async function todoistSync() {
+  const btn = $("todoist-export");
+  btn.disabled = true;
+  setStatus("Sincronizando con Todoist…");
+  try {
+    const res = await invoke("todoist_export");
+    store = res.store;
+    clampSelection();
+    renderAll();
+    const parts = [];
+    if (res.exported > 0) parts.push(`${res.exported} enviadas a Todoist`);
+    if (res.completed > 0) parts.push(`${res.completed} completadas desde Todoist`);
+    const summary = parts.length
+      ? parts.join(", ")
+      : `Nada nuevo (${res.skipped} ya estaban en Todoist)`;
+    if (res.error) {
+      setStatus(`Todoist: ${res.error} (${summary})`);
+    } else {
+      closeDialogs();
+      setStatus(summary);
+    }
+  } catch (e) {
+    setStatus(`Error: ${e}`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$("todoist-export").addEventListener("click", todoistSync);
+
+// Sincronización directa desde la línea de estado; si aún no hay token,
+// abre el diálogo de configuración.
+$("menu-sync").addEventListener("click", () => {
+  if (!store.todoist_token) {
+    $("todoist-token").value = "";
+    openDialog("dlg-todoist");
+    setStatus("Configura primero tu token de Todoist");
+  } else {
+    todoistSync();
+  }
+});
+
 // --- Modo oscuro (tinta clara sobre papel oscuro; se recuerda entre sesiones) ---------
 
 function applyDark(on) {

@@ -123,6 +123,8 @@
     <div id="statusline">
       <span id="statusbar">Listo.</span>
       <a href="#" id="menu-dark">modo-oscuro</a>
+      <a href="#" id="menu-todoist">todoist</a>
+      <a href="#" id="menu-sync">sincronizar</a>
       <a href="#" id="menu-trash">papelera</a>
     </div>
   </main>
@@ -147,6 +149,22 @@
       <ul id="trash-list" class="select-list"></ul>
       <div class="add-row right">
         <button class="btn" data-close>cerrar</button>
+      </div>
+    </div>
+
+    <div class="dlg block hidden" id="dlg-todoist">
+      <span class="block-title">todoist</span>
+      <p class="dimmed">Pega tu token de API (Todoist → Configuración → Integraciones →
+        Desarrollador). Cada tarea pendiente se envía una sola vez, con su proyecto,
+        fecha, prioridad y #tags; las que completes en Todoist se marcan como
+        hechas aquí al sincronizar.</p>
+      <div class="add-row">
+        <input id="todoist-token" type="password" placeholder="token de API…" />
+        <button class="btn" id="todoist-save">guardar</button>
+      </div>
+      <div class="add-row right">
+        <button class="btn" data-close>cerrar</button>
+        <button class="btn btn-primary" id="todoist-export">sincronizar</button>
       </div>
     </div>
 

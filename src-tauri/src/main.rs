@@ -9,6 +9,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod model;
+mod todoist;
 
 use std::sync::Mutex;
 
@@ -135,37 +136,44 @@ fn edit_todo(state: State<AppState>, project: usize, todo: usize, text: String) 
     })
 }
 
-/// Completa/descompleta una tarea. Si es recurrente y se completa, genera la
-/// siguiente aparición justo debajo (misma lógica que la TUI).
+/// Marca una tarea como hecha. Si es recurrente, genera la siguiente
+/// aparición justo debajo (misma lógica que la TUI).
+fn complete_todo(p: &mut Project, todo: usize, today: NaiveDate) {
+    let mut regen: Option<(usize, Todo)> = None;
+    if let Some(t) = p.todos.get_mut(todo) {
+        t.done = true;
+        t.completed_at = Some(today);
+        if t.recurrence != Recurrence::None {
+            let base = t.date.unwrap_or(today);
+            if let Some(next) = t.recurrence.next_date(base) {
+                let mut copy = t.clone();
+                copy.done = false;
+                copy.completed_at = None;
+                copy.date = Some(next);
+                copy.todoist_id = None; // la nueva aparición aún no está en Todoist
+                for sub in &mut copy.subtasks {
+                    sub.done = false;
+                }
+                regen = Some((todo + 1, copy));
+            }
+        }
+    }
+    if let Some((pos, copy)) = regen {
+        p.todos.insert(pos.min(p.todos.len()), copy);
+    }
+}
+
+/// Completa/descompleta una tarea.
 #[tauri::command]
 fn toggle_todo(state: State<AppState>, project: usize, todo: usize) -> Store {
     with_store(&state, |s| {
-        let today = Local::now().date_naive();
         let Some(p) = s.projects.get_mut(project) else { return };
-        let mut regen: Option<(usize, Todo)> = None;
-        if let Some(t) = p.todos.get_mut(todo) {
-            t.done = !t.done;
-            if t.done {
-                t.completed_at = Some(today);
-                if t.recurrence != Recurrence::None {
-                    let base = t.date.unwrap_or(today);
-                    if let Some(next) = t.recurrence.next_date(base) {
-                        let mut copy = t.clone();
-                        copy.done = false;
-                        copy.completed_at = None;
-                        copy.date = Some(next);
-                        for sub in &mut copy.subtasks {
-                            sub.done = false;
-                        }
-                        regen = Some((todo + 1, copy));
-                    }
-                }
-            } else {
-                t.completed_at = None;
-            }
-        }
-        if let Some((pos, copy)) = regen {
-            p.todos.insert(pos.min(p.todos.len()), copy);
+        let Some(t) = p.todos.get_mut(todo) else { return };
+        if t.done {
+            t.done = false;
+            t.completed_at = None;
+        } else {
+            complete_todo(p, todo, Local::now().date_naive());
         }
     })
 }
@@ -343,6 +351,116 @@ fn record_pomodoro(state: State<AppState>, project: Option<String>, todo: Option
     })
 }
 
+// --- Todoist ------------------------------------------------------------------
+
+/// Resultado de la sincronización con Todoist, para el frontend.
+#[derive(Clone, serde::Serialize)]
+struct TodoistOutcome {
+    store: Store,
+    /// Tareas creadas en Todoist en esta pasada.
+    exported: usize,
+    /// Pendientes que ya estaban exportadas y se han saltado.
+    skipped: usize,
+    /// Tareas marcadas como hechas aquí por estar completadas en Todoist.
+    completed: usize,
+    /// Si algo falló a medias, el mensaje (lo ya hecho cuenta igualmente).
+    error: Option<String>,
+}
+
+/// Guarda el token de API de Todoist (o lo borra, si viene vacío).
+#[tauri::command]
+fn set_todoist_token(state: State<AppState>, token: String) -> Store {
+    with_store(&state, |s| {
+        let token = token.trim();
+        s.todoist_token = (!token.is_empty()).then(|| token.to_string());
+    })
+}
+
+/// Sincroniza con Todoist: envía las tareas pendientes que aún no se han
+/// exportado (cada proyecto local se corresponde con uno remoto homónimo) y
+/// marca como hechas aquí las ya exportadas que estén completadas allí.
+#[tauri::command]
+async fn todoist_export(state: State<'_, AppState>) -> Result<TodoistOutcome, String> {
+    // Recoge lo pendiente sin retener el lock durante las peticiones de red.
+    let (token, outgoing, known_ids) = {
+        let s = state.0.lock().unwrap();
+        let token = s
+            .todoist_token
+            .clone()
+            .ok_or("no hay token de Todoist configurado")?;
+        let mut outgoing = Vec::new();
+        let mut known_ids = Vec::new();
+        for (pi, p) in s.projects.iter().enumerate() {
+            for (ti, t) in p.todos.iter().enumerate() {
+                if t.done {
+                    continue;
+                }
+                if let Some(id) = &t.todoist_id {
+                    known_ids.push(id.clone());
+                    continue;
+                }
+                outgoing.push(todoist::Outgoing {
+                    project: pi,
+                    todo: ti,
+                    project_name: p.name.clone(),
+                    content: t.title.clone(),
+                    due_date: t.date.map(|d| d.to_string()),
+                    priority: todoist::priority(t.priority),
+                    labels: t.tags.clone(),
+                });
+            }
+        }
+        (token, outgoing, known_ids)
+    };
+    let skipped = known_ids.len();
+
+    // Vuelta: qué tareas ya exportadas se han completado en Todoist.
+    let (remote_done, pull_error) = if known_ids.is_empty() {
+        (Vec::new(), None)
+    } else {
+        todoist::fetch_completed(&token, &known_ids).await
+    };
+
+    // Ida: crea en Todoist lo que aún no está.
+    let (created, push_error) = if outgoing.is_empty() {
+        (Vec::new(), None)
+    } else {
+        todoist::export(&token, &outgoing).await
+    };
+
+    // Registra las ids remotas de lo creado (aunque haya fallado a medias,
+    // para no duplicarlo en el siguiente intento), marca lo completado en
+    // Todoist (por id remota: las inserciones de recurrentes mueven índices)
+    // y persiste.
+    let mut s = state.0.lock().unwrap();
+    let exported = created.len();
+    for (pi, ti, id) in created {
+        if let Some(t) = s.projects.get_mut(pi).and_then(|p| p.todos.get_mut(ti)) {
+            t.todoist_id = Some(id);
+        }
+    }
+    let today = Local::now().date_naive();
+    let mut completed = 0;
+    for id in &remote_done {
+        for p in &mut s.projects {
+            if let Some(ti) = p
+                .todos
+                .iter()
+                .position(|t| !t.done && t.todoist_id.as_deref() == Some(id))
+            {
+                complete_todo(p, ti, today);
+                completed += 1;
+                break;
+            }
+        }
+    }
+    if exported > 0 || completed > 0 {
+        let _ = s.save();
+    }
+    let error = push_error.or(pull_error);
+    Ok(TodoistOutcome { store: s.clone(), exported, skipped, completed, error })
+}
+
 /// Cierra la aplicación (atajo `q`, como en la TUI).
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
@@ -374,6 +492,8 @@ fn main() {
             restore_trash,
             purge_trash,
             record_pomodoro,
+            set_todoist_token,
+            todoist_export,
             quit_app,
         ])
         .run(tauri::generate_context!())

@@ -223,7 +223,7 @@ input[type="radio"]:disabled::after { color: var(--ink-faint); }
 .btn:hover { background: var(--ink-faint); }
 .btn:active, .btn-primary { background: var(--ink); color: var(--paper); }
 
-input[type="text"], input[type="date"], textarea {
+input[type="text"], input[type="password"], input[type="date"], textarea {
   font: inherit;
   font-size: 13px;
   color: var(--ink);
@@ -236,7 +236,7 @@ input::placeholder { color: var(--ink-dim); }
 input:focus, textarea:focus { outline: 1px solid var(--ink); outline-offset: 1px; }
 
 .add-row { display: flex; gap: 5px; align-items: center; flex: none; flex-wrap: wrap; }
-.add-row input[type="text"] { flex: 1; }
+.add-row input[type="text"], .add-row input[type="password"] { flex: 1; }
 .add-row.right { justify-content: flex-end; }
 .add-row.center { justify-content: center; }
 
@@ -333,8 +333,8 @@ input:focus, textarea:focus { outline: 1px solid var(--ink); outline-offset: 1px
   white-space: nowrap;
 }
 #statusbar { flex: 1; overflow: hidden; text-overflow: ellipsis; }
-#menu-trash, #menu-dark { color: var(--ink-dim); text-decoration: underline; }
-#menu-trash:hover, #menu-dark:hover { color: var(--ink); background: none; }
+#menu-trash, #menu-dark, #menu-todoist, #menu-sync { color: var(--ink-dim); text-decoration: underline; }
+#menu-trash:hover, #menu-dark:hover, #menu-todoist:hover, #menu-sync:hover { color: var(--ink); background: none; }
 
 /* --- Diálogos ---------------------------------------------------------------------------------------- */
 

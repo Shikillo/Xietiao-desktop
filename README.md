@@ -13,16 +13,28 @@ Versión de escritorio de [Xietiao](https://github.com/Shikillo/Xietiao) (el das
 - **Pomodoro** — temporizador 25/5 con vinculación a tareas y registro de focos; reloj y cronómetro.
 - **Papelera** — restaurar o purgar proyectos y tareas borradas.
 - **Modo oscuro** — tinta clara sobre papel oscuro, se recuerda entre sesiones.
+- **Todoist** — sincronización: las tareas pendientes se envían a Todoist
+  (proyecto homónimo, fecha, prioridad y `#tags`), cada una una sola vez, y las
+  que completes en Todoist se marcan como hechas también aquí (recurrencia
+  incluida; borrarlas allí no las completa). Se lanza desde el enlace
+  «sincronizar» de la línea de estado o desde el diálogo de Todoist; basta con
+  pegar tu token de API (Todoist → Configuración → Integraciones → Desarrollador).
 - **Atajos de teclado** — los mismos que la TUI (pulsa `?` dentro de la app para verlos): `Tab` cambia de panel, `j/k` navega, `a` añade, `d` borra, `Espacio` marca, `/` busca…
 
 ## Datos compartidos con la TUI
 
-El backend reutiliza el `model.rs` de la versión TUI **sin cambios**, así que ambas apps
+El backend reutiliza el `model.rs` de la versión TUI, así que ambas apps
 leen y escriben el mismo fichero: `<config_dir>/xietiao/store.json`
 (`~/Library/Application Support/xietiao/` en macOS, `~/.config/xietiao/` en Linux).
 Puedes alternar entre la TUI y la app de escritorio con los mismos datos.
 
 > Nota: si tienes ambas abiertas a la vez, la última en guardar gana.
+
+> Nota: la versión de escritorio añade dos campos al modelo (`todoist_token` y el
+> `todoist_id` de cada tarea). La TUI los ignora al cargar, pero **los descarta al
+> guardar**: si usas la integración con Todoist y también la TUI, conviene portar
+> esos dos campos al `model.rs` de la TUI para no perder el token ni duplicar
+> tareas al re-exportar.
 
 ## Arquitectura
 
@@ -67,8 +79,8 @@ instaladores de **macOS (Apple Silicon e Intel), Windows y Linux** y los adjunta
 a la release al empujar un tag:
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 También puede lanzarse a mano desde la pestaña Actions (deja los bundles como artefactos).
