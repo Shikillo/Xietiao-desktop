@@ -378,6 +378,8 @@ input:focus, textarea:focus { outline: 1px solid var(--ink); outline-offset: 1px
   cursor: default;
 }
 .tray-btn:hover { background: var(--ink-faint); color: var(--ink); }
+/* Icono seleccionado navegando con Alt + flechas: vídeo inverso, como una selección. */
+.tray-btn.selected { background: var(--ink); color: var(--paper); }
 .tray-btn .icon { width: 18px; height: 18px; flex: none; }
 
 /* --- Barra de progreso ---------------------------------------------------------------------------- */

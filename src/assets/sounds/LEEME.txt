@@ -1,10 +1,20 @@
 Sonidos de interfaz de Xietiao.
 
-Suelta aquí dos ficheros con estos nombres (vale .wav, .mp3 u .ogg;
-se prueban en ese orden):
+Cada evento busca aquí su fichero (se prueban .flac, .wav, .mp3 y .ogg,
+en ese orden). Los nombres esperados y cuándo suenan:
 
-  move.wav    → clic al navegar con Tab / flechas / j k
-  popup.wav   → al abrirse un diálogo (agenda, ayuda, papelera…)
+  move.flac                 → clic al navegar con Tab / flechas / j k
+  completetodo.flac         → al completar una tarea o subtarea (no al reabrir)
+  openpopup.flac            → al abrirse un diálogo (agenda, ayuda, papelera…)
+  closepopup.flac           → al cerrarse un diálogo
+  open_settings.flac        → al abrir la bandeja de ajustes
+  close_settings.flac       → al cerrar la bandeja de ajustes
+  add-edit-todo-proyect.flac→ al crear o editar una tarea o proyecto
+  delete.flac               → al enviar algo a la papelera o purgarlo
+  initialaniation.flac      → con la animación de arranque (splash)
+  endpomo.flac              → al terminar un pomodoro (foco o descanso)
+  syncend.flac              → al acabar bien una sincronización con Todoist
 
-Mientras no existan, la app usa un clic sintetizado (WebAudio) como
-relleno. El volumen base se ajusta en SOUND_VOLUME, en src/app.js.
+Si falta un fichero: «move» y «openpopup» usan un clic sintetizado
+(WebAudio) y «endpomo» un beep; el resto no suenan. Los volúmenes se
+ajustan en SOUND_DEFS, en src/app.js.

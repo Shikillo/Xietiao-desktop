@@ -136,6 +136,7 @@ function renderTodos() {
     check.addEventListener("click", (e) => {
       e.stopPropagation();
       ui.todo = i;
+      if (!t.done) playSound("complete"); // t.done aún es el estado previo
       call("toggle_todo", { project: ui.project, todo: i });
       setStatus(t.done ? "Tarea reabierta" : "Tarea completada");
     });
@@ -181,6 +182,7 @@ function renderTodos() {
       scheck.addEventListener("click", (e) => {
         e.stopPropagation();
         ui.todo = i;
+        if (!s.done) playSound("complete");
         call("toggle_subtask", { project: ui.project, todo: i, subtask: si });
       });
       const stitle = document.createElement("span");
@@ -360,6 +362,7 @@ function closeDialogs() {
     $("overlay").classList.add("hidden");
     return;
   }
+  playSound("popup-close");
   // Desliza el diálogo hacia abajo y oculta al terminar la animación.
   open.classList.add("closing");
   // Sin animación (p. ej. prefers-reduced-motion): ocultar directamente.
@@ -438,6 +441,7 @@ function renderSubtasksDialog() {
     check.checked = s.done;
     check.addEventListener("click", async (e) => {
       e.stopPropagation();
+      if (!s.done) playSound("complete");
       await call("toggle_subtask", { project: ui.project, todo: ui.todo, subtask: i });
       renderSubtasksDialog();
     });
@@ -573,6 +577,7 @@ function renderTrashDialog() {
     purge.textContent = "Eliminar";
     purge.addEventListener("click", async () => {
       await call("purge_trash", { item: i });
+      playSound("delete");
       renderTrashDialog();
       setStatus("Elemento eliminado definitivamente");
     });
@@ -727,6 +732,7 @@ async function todoistSync() {
       setStatus(`Todoist: ${res.error} (${summary})`);
     } else {
       closeDialogs();
+      playSound("sync-end");
       setStatus(summary);
     }
   } catch (e) {
@@ -960,53 +966,93 @@ $("scan-add").addEventListener("click", async () => {
 
 // --- Bandeja de ajustes (los iconos de la esquina inferior) ---------------------------
 //
-// No es un diálogo: sin overlay ni oscurecido. Se abre y cierra sólo con el
-// botón de settings, y se queda abierta mientras tanto.
+// No es un diálogo: sin overlay ni oscurecido. Se abre con el botón de settings
+// o con Alt; abierta con Alt, las flechas recorren los iconos (traySel marca
+// cuál, en vídeo inverso), Enter lo activa y Alt/Escape la cierran.
 
-$("settings-btn").addEventListener("click", () => {
-  const nowHidden = $("settings-tray").classList.toggle("hidden");
-  $("settings-btn").classList.toggle("active", !nowHidden);
-  playSound("move");
-});
+let traySel = -1; // índice del icono seleccionado con teclado; -1 = sin selección
+
+function trayBtns() {
+  return Array.from(document.querySelectorAll("#settings-tray .tray-btn"));
+}
+
+function trayOpen() {
+  return !$("settings-tray").classList.contains("hidden");
+}
+
+function renderTraySel() {
+  trayBtns().forEach((b, i) => b.classList.toggle("selected", i === traySel));
+}
+
+function setTray(open, { keyboard = false } = {}) {
+  if (open === trayOpen()) return;
+  $("settings-tray").classList.toggle("hidden", !open);
+  $("settings-btn").classList.toggle("active", open);
+  playSound(open ? "settings-open" : "settings-close");
+  traySel = open && keyboard ? 0 : -1;
+  renderTraySel();
+}
+
+$("settings-btn").addEventListener("click", () => setTray(!trayOpen()));
+
+// Sin uso todavía; pronto lanzará cosas de docker.
+$("menu-docker").addEventListener("click", () => setStatus("docker: próximamente"));
 
 // --- Sonidos de interfaz ---------------------------------------------------------------
 //
-// Dos sonidos: «move» (navegar con Tab/flechas/jk) y «popup» (abrir un diálogo).
-// Se buscan en assets/sounds/ como move.(wav|mp3|ogg) y popup.(wav|mp3|ogg);
-// basta con soltar ahí los ficheros con esos nombres. Mientras no existan,
-// suena un clic sintetizado con WebAudio para no dejar la interfaz muda.
+// Cada sonido lógico apunta a un fichero de assets/sounds/ (se prueban varios
+// formatos, .flac incluido). Si el fichero no existe, los que tienen `synth`
+// caen a un clic generado con WebAudio; el resto simplemente no suenan.
 
-const SOUND_VOLUME = { move: 0.35, popup: 0.5 };
-const sounds = { move: null, popup: null }; // Audio cargado, "synth" o null (cargando)
+const SOUND_DEFS = {
+  move:             { file: "move", volume: 0.35, synth: "move" },   // Tab/flechas/jk
+  popup:            { file: "openpopup", volume: 0.5, synth: "popup" }, // abrir diálogo
+  "popup-close":    { file: "closepopup", volume: 0.5 },             // cerrar diálogo
+  "settings-open":  { file: "open_settings", volume: 0.5 },          // bandeja de ajustes
+  "settings-close": { file: "close_settings", volume: 0.5 },
+  "add-edit":       { file: "add-edit-todo-proyect", volume: 0.5 },  // crear/editar tarea o proyecto
+  complete:         { file: "completetodo", volume: 0.5 },           // completar tarea o subtarea
+  delete:           { file: "delete", volume: 0.5 },                 // enviar a papelera / purgar
+  splash:           { file: "initialaniation", volume: 0.5 },        // animación de arranque
+  "pomo-end":       { file: "endpomo", volume: 0.6, synth: "beep" }, // fin de pomodoro
+  "sync-end":       { file: "syncend", volume: 0.5 },                // sincronización terminada
+};
 
-function initSound(name) {
-  const exts = ["wav", "mp3", "ogg"];
-  const tryNext = (i) => {
-    if (i >= exts.length) {
-      sounds[name] = "synth";
-      return;
-    }
-    const a = new Audio(`assets/sounds/${name}.${exts[i]}`);
-    a.preload = "auto";
-    a.volume = SOUND_VOLUME[name];
-    a.addEventListener("canplaythrough", () => { sounds[name] = a; }, { once: true });
-    a.addEventListener("error", () => tryNext(i + 1), { once: true });
-  };
-  tryNext(0);
-}
-initSound("move");
-initSound("popup");
+// Web Audio: cada fichero se descarga y decodifica UNA vez al arrancar y se
+// reproduce desde memoria (AudioBufferSourceNode). Reproducir con <audio> +
+// cloneNode creaba un reproductor nativo nuevo en cada pulsación y daba
+// tirones y retardo, sobre todo con «move».
+
+const sounds = {}; // por nombre: promesa que resuelve a AudioBuffer o "synth"
 
 let audioCtx = null;
+
+function getCtx() {
+  audioCtx ??= new AudioContext();
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  return audioCtx;
+}
+
+async function loadSound(name) {
+  for (const ext of ["flac", "wav", "mp3", "ogg"]) {
+    try {
+      const res = await fetch(`assets/sounds/${SOUND_DEFS[name].file}.${ext}`);
+      if (!res.ok) continue;
+      return await getCtx().decodeAudioData(await res.arrayBuffer());
+    } catch { /* formato ausente o no decodificable: prueba el siguiente */ }
+  }
+  return "synth";
+}
+Object.keys(SOUND_DEFS).forEach((n) => { sounds[n] = loadSound(n); });
 
 /** Clic de repuesto generado con WebAudio (hasta que haya fichero de sonido). */
 function synthSound(name) {
   try {
-    audioCtx ??= new AudioContext();
-    const t = audioCtx.currentTime;
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.connect(gain).connect(audioCtx.destination);
+    const ctx = getCtx();
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain).connect(ctx.destination);
     if (name === "move") {
       // Tic corto y seco, como una tecla.
       osc.type = "square";
@@ -1029,15 +1075,23 @@ function synthSound(name) {
 }
 
 function playSound(name) {
-  const s = sounds[name];
-  if (s && s !== "synth") {
-    // Clonar permite que dos pulsaciones rápidas se solapen sin cortarse.
-    const a = s.cloneNode();
-    a.volume = SOUND_VOLUME[name];
-    a.play().catch(() => {});
-  } else {
-    synthSound(name);
-  }
+  // La promesa ya está resuelta salvo justo al arrancar; las reproducciones
+  // rápidas se solapan solas (cada una es un BufferSource independiente).
+  sounds[name].then((s) => {
+    if (s === "synth") {
+      const fallback = SOUND_DEFS[name].synth;
+      if (fallback === "beep") beep();
+      else if (fallback) synthSound(fallback);
+      return;
+    }
+    const ctx = getCtx();
+    const src = ctx.createBufferSource();
+    src.buffer = s;
+    const gain = ctx.createGain();
+    gain.gain.value = SOUND_DEFS[name].volume;
+    src.connect(gain).connect(ctx.destination);
+    src.start();
+  }).catch(() => {});
 }
 
 // --- Tema (colores de papel y tinta; se recuerda entre sesiones) ----------------------
@@ -1112,6 +1166,7 @@ async function addProject() {
   if (!v) return;
   input.value = "";
   await call("add_project", { name: v });
+  playSound("add-edit");
   ui.project = store.projects.length - 1;
   ui.todo = null;
   renderAll();
@@ -1123,8 +1178,10 @@ $("project-new").addEventListener("keydown", (e) => { if (e.key === "Enter") add
 $("project-rename").addEventListener("click", () => {
   const p = currentProject();
   if (!p) return;
-  askText("Renombrar proyecto", p.name, (v) =>
-    call("rename_project", { project: ui.project, name: v }));
+  askText("Renombrar proyecto", p.name, async (v) => {
+    await call("rename_project", { project: ui.project, name: v });
+    playSound("add-edit");
+  });
 });
 
 $("project-delete").addEventListener("click", () => {
@@ -1132,6 +1189,7 @@ $("project-delete").addEventListener("click", () => {
   if (!p) return;
   askConfirm(`¿Enviar el proyecto «${p.name}» a la papelera?`, async () => {
     await call("delete_project", { project: ui.project });
+    playSound("delete");
     setStatus("Proyecto enviado a la papelera");
   });
 });
@@ -1161,6 +1219,7 @@ async function addTodo() {
   if (!v || !currentProject()) return;
   input.value = "";
   await call("add_todo", { project: ui.project, text: v });
+  playSound("add-edit");
   ui.todo = currentProject().todos.length - 1;
   renderAll();
   setStatus("Tarea añadida");
@@ -1184,8 +1243,10 @@ function openEditTodo() {
   withSelectedTodo(() => {
     const t = selectedTodo();
     const text = [t.title, ...t.tags.map((x) => `#${x}`)].join(" ");
-    askText("Editar tarea", text, (v) =>
-      call("edit_todo", { project: ui.project, todo: ui.todo, text: v }));
+    askText("Editar tarea", text, async (v) => {
+      await call("edit_todo", { project: ui.project, todo: ui.todo, text: v });
+      playSound("add-edit");
+    });
   });
 }
 $("todo-edit").addEventListener("click", openEditTodo);
@@ -1222,6 +1283,7 @@ $("todo-delete").addEventListener("click", () =>
     const t = selectedTodo();
     askConfirm(`¿Enviar la tarea «${t.title}» a la papelera?`, async () => {
       await call("delete_todo", { project: ui.project, todo: ui.todo });
+      playSound("delete");
       setStatus("Tarea enviada a la papelera");
     });
   }));
@@ -1335,7 +1397,7 @@ function renderTimer() {
 
 function beep() {
   try {
-    const ctx = new AudioContext();
+    const ctx = getCtx();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = "square";
@@ -1349,7 +1411,7 @@ function beep() {
 }
 
 async function timerFinished() {
-  beep();
+  playSound("pomo-end"); // endpomo.flac; si faltara, cae al beep sintetizado
   if (!timer.onBreak) {
     const p = currentProject();
     const project = ui.link?.project ?? p?.name ?? null;
@@ -1503,6 +1565,40 @@ document.addEventListener("keydown", (e) => {
   const k = e.key;
   const stop = () => e.preventDefault();
 
+  // Alt abre/cierra la bandeja de ajustes; abierta con teclado, las flechas
+  // (o j/k) recorren sus iconos, Enter/Espacio activa y Escape cierra.
+  if (k === "Alt" && !e.repeat) {
+    stop();
+    setTray(!trayOpen(), { keyboard: true });
+    return;
+  }
+  if (traySel >= 0 && trayOpen()) {
+    const btns = trayBtns();
+    switch (k) {
+      case "ArrowUp": case "k":
+        stop();
+        traySel = (traySel + btns.length - 1) % btns.length;
+        renderTraySel();
+        playSound("move");
+        return;
+      case "ArrowDown": case "j":
+        stop();
+        traySel = (traySel + 1) % btns.length;
+        renderTraySel();
+        playSound("move");
+        return;
+      case " ": case "Enter":
+        stop();
+        btns[traySel].click();
+        return;
+      case "Escape":
+        stop();
+        setTray(false);
+        return;
+      // Cualquier otra tecla sigue su curso normal con la bandeja abierta.
+    }
+  }
+
   switch (k) {
     case "Tab": {
       stop();
@@ -1539,6 +1635,7 @@ document.addEventListener("keydown", (e) => {
     case " ": case "Enter":
       stop();
       if (ui.focus === "todos" && ui.todo !== null) {
+        if (!selectedTodo()?.done) playSound("complete");
         call("toggle_todo", { project: ui.project, todo: ui.todo });
       } else if (ui.focus === "clocks") {
         if (ui.clockSel === 0) $("timer-toggle").click();
@@ -1620,6 +1717,7 @@ function dismissSplash() {
 }
 
 function runSplash() {
+  playSound("splash");
   const pre = $("splash-art");
   const lines = SPLASH_ART.split("\n");
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
