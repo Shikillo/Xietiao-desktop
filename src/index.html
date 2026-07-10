@@ -45,8 +45,10 @@
             <button class="btn" id="todo-priority" title="prioridad cíclica: ! → !! → !!!">prio</button>
             <button class="btn" id="todo-recur" title="repetir: diaria → semanal → mensual">↻</button>
             <input type="date" id="todo-date" title="asignar fecha" />
+            <input type="time" id="todo-time" title="asignar hora (pide fecha; sin ella, hoy)" />
             <button class="btn" id="todo-nodate" title="quitar fecha">sin fecha</button>
             <button class="btn" id="todo-subtasks">subtareas</button>
+            <button class="btn" id="todo-image" title="ver o adjuntar una imagen">imagen</button>
             <button class="btn" id="todo-move">mover a…</button>
             <button class="btn" id="todo-edit">editar</button>
             <button class="btn" id="todo-delete">borrar</button>
@@ -125,7 +127,8 @@
     <!-- línea de estado -->
     <div id="statusline">
       <span id="statusbar">Listo.</span>
-      <a href="#" id="menu-dark">modo-oscuro</a>
+      <a href="#" id="menu-theme">tema</a>
+      <a href="#" id="menu-stats">estadísticas</a>
       <a href="#" id="menu-todoist">todoist</a>
       <a href="#" id="menu-sync">sincronizar</a>
       <a href="#" id="menu-scan">escanear</a>
@@ -236,6 +239,7 @@
         <b>f</b><span>asignar tarea al día seleccionado</span>
         <b>p / c</b><span>prioridad · recurrencia de la tarea</span>
         <b>s</b><span>editar subtareas de la tarea</span>
+        <b>i</b><span>imagen de la tarea (ver o adjuntar)</span>
         <b>m</b><span>mover la tarea a otro proyecto</span>
         <b>v</b><span>vincular pomodoro a la tarea</span>
         <b>J / K</b><span>mover el elemento abajo / arriba</span>
@@ -253,6 +257,48 @@
       </div>
     </div>
 
+    <div class="dlg block hidden" id="dlg-image">
+      <span class="block-title" id="image-title">imagen</span>
+      <img id="image-view" alt="imagen de la tarea" />
+      <div class="add-row right">
+        <button class="btn" id="image-remove">quitar</button>
+        <button class="btn" id="image-change">cambiar</button>
+        <button class="btn btn-primary" data-close>cerrar</button>
+      </div>
+    </div>
+
+    <div class="dlg block hidden" id="dlg-theme">
+      <span class="block-title">tema</span>
+      <p class="dimmed">Elige el color del papel (fondo) y el de la tinta (texto);
+        los tonos intermedios se calculan solos. Los cambios se aplican al momento
+        y se recuerdan entre sesiones.</p>
+      <div class="add-row">
+        <label class="theme-pick">papel <input type="color" id="theme-paper" /></label>
+        <label class="theme-pick">tinta <input type="color" id="theme-ink" /></label>
+        <button class="btn" id="theme-swap" title="intercambiar papel y tinta">⇄</button>
+      </div>
+      <div class="add-row">
+        <span class="dimmed">presets:</span>
+        <button class="btn" id="theme-light">claro</button>
+        <button class="btn" id="theme-dark">oscuro</button>
+      </div>
+      <div class="add-row right">
+        <button class="btn btn-primary" data-close>cerrar</button>
+      </div>
+    </div>
+
+    <div class="dlg block hidden" id="dlg-stats">
+      <span class="block-title">estadísticas</span>
+      <div class="help-grid" id="stats-summary"></div>
+      <span class="dimmed stats-heading">últimos 7 días · tareas completadas</span>
+      <div id="stats-week"></div>
+      <span class="dimmed stats-heading">por proyecto</span>
+      <ul id="stats-projects" class="select-list"></ul>
+      <div class="add-row right">
+        <button class="btn btn-primary" data-close>cerrar</button>
+      </div>
+    </div>
+
     <div class="dlg block hidden" id="dlg-alert">
       <span class="block-title">aviso</span>
       <p id="alert-text">¡Foco completado!</p>
@@ -262,6 +308,9 @@
     </div>
 
   </div>
+
+  <!-- Selector de fichero para la imagen del to-do (se abre por JS). -->
+  <input type="file" id="todo-image-file" accept="image/*" class="hidden" />
 
   <script src="assets/tesseract/tesseract.min.js"></script>
   <script src="app.js"></script>

@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use chrono::NaiveDate;
+use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -31,10 +31,30 @@ struct RemoteTask {
 }
 
 /// Fecha de vencimiento de una tarea remota. `date` puede ser «YYYY-MM-DD» o
-/// una marca con hora «YYYY-MM-DDThh:mm:ss»; nos quedamos con el día.
+/// una marca con hora «YYYY-MM-DDThh:mm:ss»; si la tarea tiene hora fija,
+/// `datetime` trae el instante en RFC3339 (UTC).
 #[derive(Deserialize)]
 struct RemoteDue {
     date: String,
+    #[serde(default)]
+    datetime: Option<String>,
+}
+
+/// Separa un vencimiento remoto en día y hora locales.
+fn parse_due(d: &RemoteDue) -> (Option<NaiveDate>, Option<NaiveTime>) {
+    if let Some(dt) = &d.datetime {
+        // Hora fija: RFC3339 en UTC → hora local.
+        if let Ok(fixed) = DateTime::parse_from_rfc3339(dt) {
+            let local = fixed.with_timezone(&Local);
+            return (Some(local.date_naive()), Some(local.time()));
+        }
+        // Hora «flotante» (sin zona): se toma tal cual.
+        if let Ok(naive) = NaiveDateTime::parse_from_str(dt, "%Y-%m-%dT%H:%M:%S") {
+            return (Some(naive.date()), Some(naive.time()));
+        }
+    }
+    let day = d.date.get(..10).unwrap_or(d.date.as_str());
+    (NaiveDate::parse_from_str(day, "%Y-%m-%d").ok(), None)
 }
 
 /// Tarea activa (pendiente) tal como la lista la API, con lo que importamos.
@@ -73,6 +93,9 @@ pub struct Outgoing {
     pub project_name: String,
     pub content: String,
     pub due_date: Option<String>,
+    /// Si la tarea tiene hora, el instante completo (RFC3339 en UTC);
+    /// tiene prioridad sobre `due_date` al exportar.
+    pub due_datetime: Option<String>,
     pub priority: u8,
     pub labels: Vec<String>,
 }
@@ -83,6 +106,7 @@ pub struct Incoming {
     pub project_name: String,
     pub content: String,
     pub due_date: Option<NaiveDate>,
+    pub due_time: Option<NaiveTime>,
     pub priority: Priority,
     pub labels: Vec<String>,
 }
@@ -251,7 +275,9 @@ pub async fn export(
             "project_id": project_ids[&task.project_name],
             "priority": task.priority,
         });
-        if let Some(d) = &task.due_date {
+        if let Some(dt) = &task.due_datetime {
+            body["due_datetime"] = json!(dt);
+        } else if let Some(d) = &task.due_date {
             body["due_date"] = json!(d);
         }
         if !task.labels.is_empty() {
@@ -303,15 +329,13 @@ pub async fn fetch_active(token: &str) -> (Vec<Incoming>, Option<String>) {
                 .get(&t.project_id)
                 .cloned()
                 .unwrap_or_else(|| "Todoist".to_string());
-            let due_date = t.due.and_then(|d| {
-                let day = d.date.get(..10).unwrap_or(d.date.as_str());
-                NaiveDate::parse_from_str(day, "%Y-%m-%d").ok()
-            });
+            let (due_date, due_time) = t.due.as_ref().map(parse_due).unwrap_or((None, None));
             incoming.push(Incoming {
                 todoist_id: t.id,
                 project_name,
                 content: t.content,
                 due_date,
+                due_time,
                 priority: priority_from(t.priority),
                 labels: t.labels,
             });

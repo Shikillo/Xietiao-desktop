@@ -155,7 +155,9 @@ function renderTodos() {
     const bits = [];
     if (t.priority !== "None") bits.push(PRIO_MARKER[t.priority]);
     if (t.recurrence !== "None") bits.push(RECUR_LABEL[t.recurrence]);
+    if (t.image) bits.push("▣");
     if (t.date) bits.push(fmtShort(t.date));
+    if (t.time) bits.push(t.time.slice(0, 5));
     const [sd, st] = [t.subtasks.filter((s) => s.done).length, t.subtasks.length];
     if (st > 0) bits.push(`[${sd}/${st}]`);
     meta.textContent = bits.join(" ");
@@ -194,9 +196,10 @@ function renderTodos() {
     });
   });
 
-  // La fecha del selector refleja la tarea seleccionada.
+  // Fecha y hora de los selectores reflejan la tarea seleccionada.
   const sel = selectedTodo();
   $("todo-date").value = sel?.date ?? "";
+  $("todo-time").value = sel?.time?.slice(0, 5) ?? "";
 }
 
 function renderCalendar() {
@@ -258,23 +261,29 @@ function renderAgenda() {
   if (!ui.selDate) return;
   const [y, m, d] = ui.selDate.split("-");
   $("agenda-title").textContent = `agenda · ${d}/${m}/${y}`;
+  const entries = [];
   store.projects.forEach((p, pi) => {
     p.todos.forEach((t, ti) => {
-      if (t.date !== ui.selDate) return;
-      const li = document.createElement("li");
-      li.classList.toggle("done", t.done);
-      li.textContent = `${PRIO_MARKER[t.priority]} ${t.title} — ${p.name}`.trim();
-      li.addEventListener("click", () => {
-        // Saltar a la tarea en su proyecto.
-        closeDialogs();
-        ui.project = pi;
-        ui.todo = ti;
-        ui.focus = "todos";
-        renderAll();
-      });
-      list.appendChild(li);
+      if (t.date === ui.selDate) entries.push({ p, pi, t, ti });
     });
   });
+  // Las tareas con hora primero, en orden; las sin hora, al final.
+  entries.sort((a, b) => (a.t.time ?? "￿").localeCompare(b.t.time ?? "￿"));
+  for (const { p, pi, t, ti } of entries) {
+    const li = document.createElement("li");
+    li.classList.toggle("done", t.done);
+    const hh = t.time ? `${t.time.slice(0, 5)} · ` : "";
+    li.textContent = `${hh}${PRIO_MARKER[t.priority]} ${t.title} — ${p.name}`.trim();
+    li.addEventListener("click", () => {
+      // Saltar a la tarea en su proyecto.
+      closeDialogs();
+      ui.project = pi;
+      ui.todo = ti;
+      ui.focus = "todos";
+      renderAll();
+    });
+    list.appendChild(li);
+  }
 }
 
 function renderNotes() {
@@ -321,6 +330,7 @@ function renderPomodoroLink() {
 // --- Diálogos ---------------------------------------------------------------------
 
 function openDialog(id) {
+  playSound("popup");
   $("overlay").classList.remove("hidden");
   // Cancela cualquier cierre en curso y oculta el resto de diálogos.
   document.querySelectorAll(".dlg").forEach((d) => {
@@ -465,6 +475,70 @@ async function addSubtask() {
 $("subtask-add").addEventListener("click", addSubtask);
 $("subtask-new").addEventListener("keydown", (e) => { if (e.key === "Enter") addSubtask(); });
 
+// --- Imagen adjunta del to-do ----------------------------------------------------------
+//
+// El fichero vive en <config_dir>/xietiao/images/ y el modelo guarda su nombre.
+// Antes de enviarla al backend, la imagen se reescala (máx. 1600 px) y se
+// codifica en JPEG, para que el store no engorde con fotos de cámara.
+
+const IMAGE_MAX_SIDE = 1600;
+
+function openImageDialog() {
+  const t = selectedTodo();
+  if (!t?.image) return;
+  $("image-title").textContent = `imagen · ${t.title}`;
+  const img = $("image-view");
+  img.removeAttribute("src");
+  invoke("get_todo_image", { name: t.image })
+    .then((dataUrl) => { img.src = dataUrl; })
+    .catch((e) => setStatus(`Error: ${e}`));
+  openDialog("dlg-image");
+}
+
+/** Reescala y codifica en JPEG; devuelve el base64 (sin el prefijo data:). */
+async function encodeImage(file) {
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, IMAGE_MAX_SIDE / Math.max(bmp.width, bmp.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bmp.width * scale);
+  canvas.height = Math.round(bmp.height * scale);
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff"; // fondo para imágenes con transparencia
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
+}
+
+$("todo-image-file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = ""; // permite volver a elegir el mismo fichero
+  if (!file || ui.todo === null) return;
+  setStatus("Guardando imagen…");
+  try {
+    const data = await encodeImage(file);
+    await call("set_todo_image", { project: ui.project, todo: ui.todo, data });
+    setStatus("Imagen guardada");
+    openImageDialog();
+  } catch (err) {
+    setStatus(`Error: ${err.message ?? err}`);
+  }
+});
+
+$("todo-image").addEventListener("click", () =>
+  withSelectedTodo(() => {
+    if (selectedTodo().image) openImageDialog();
+    else $("todo-image-file").click();
+  }));
+
+$("image-change").addEventListener("click", () => $("todo-image-file").click());
+
+$("image-remove").addEventListener("click", () =>
+  withSelectedTodo(async () => {
+    await call("clear_todo_image", { project: ui.project, todo: ui.todo });
+    closeDialogs();
+    setStatus("Imagen quitada");
+  }));
+
 // --- Papelera ------------------------------------------------------------------------
 
 function renderTrashDialog() {
@@ -511,6 +585,112 @@ function renderTrashDialog() {
 $("menu-trash").addEventListener("click", () => {
   renderTrashDialog();
   openDialog("dlg-trash");
+});
+
+// --- Estadísticas (calculadas del store: completed_at de tareas y pomodoros) ----------
+
+/** Suma `delta` días a una fecha "YYYY-MM-DD". */
+function isoAddDays(iso, delta) {
+  const d = new Date(iso + "T00:00");
+  d.setDate(d.getDate() + delta);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+const WEEKDAYS = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
+
+function renderStatsDialog() {
+  const today = todayStr();
+
+  // Tareas completadas por día. Limitación conocida: completed_at guarda solo
+  // la última vez que se completó; reabrir una tarea borra su fecha.
+  const doneByDay = new Map();
+  let pending = 0;
+  let doneTotal = 0;
+  for (const p of store.projects) {
+    for (const t of p.todos) {
+      if (t.done) {
+        doneTotal++;
+        if (t.completed_at) doneByDay.set(t.completed_at, (doneByDay.get(t.completed_at) ?? 0) + 1);
+      } else {
+        pending++;
+      }
+    }
+  }
+  const pomosByDay = new Map();
+  for (const s of store.pomodoros) {
+    pomosByDay.set(s.date, (pomosByDay.get(s.date) ?? 0) + 1);
+  }
+
+  // Últimos 7 días, del más antiguo a hoy.
+  const week = [];
+  for (let i = 6; i >= 0; i--) {
+    const iso = isoAddDays(today, -i);
+    week.push({ iso, done: doneByDay.get(iso) ?? 0, pomos: pomosByDay.get(iso) ?? 0 });
+  }
+  const weekDone = week.reduce((n, d) => n + d.done, 0);
+  const weekPomos = week.reduce((n, d) => n + d.pomos, 0);
+
+  // Racha: días seguidos con alguna tarea completada. Si hoy aún no hay
+  // ninguna, la racha que terminó ayer sigue viva (queda día para sumarse).
+  let streak = 0;
+  let cursor = doneByDay.has(today) ? today : isoAddDays(today, -1);
+  while (doneByDay.has(cursor)) {
+    streak++;
+    cursor = isoAddDays(cursor, -1);
+  }
+
+  const focusMin = weekPomos * 25;
+  const focusTxt = focusMin >= 60 ? `${Math.floor(focusMin / 60)} h ${focusMin % 60} min` : `${focusMin} min`;
+
+  const sum = $("stats-summary");
+  sum.innerHTML = "";
+  const addLine = (label, value) => {
+    const b = document.createElement("b");
+    b.textContent = label;
+    const s = document.createElement("span");
+    s.textContent = value;
+    sum.append(b, s);
+  };
+  addLine("hoy", `${doneByDay.get(today) ?? 0} tareas · ${pomosByDay.get(today) ?? 0} pomodoros`);
+  addLine("últimos 7 días", `${weekDone} tareas · ${weekPomos} pomodoros (${focusTxt} de foco)`);
+  addLine("racha", streak > 0
+    ? `${streak} ${streak === 1 ? "día" : "días"} seguidos completando tareas`
+    : "sin racha — completa una tarea hoy");
+  addLine("pendientes", `${pending} tareas (${doneTotal} completadas en total)`);
+
+  // Barras de la semana, a escala del mejor día.
+  const chart = $("stats-week");
+  chart.innerHTML = "";
+  const max = Math.max(1, ...week.map((d) => d.done));
+  for (const d of week) {
+    const row = document.createElement("div");
+    row.className = "stat-row";
+    if (d.iso === today) row.classList.add("today");
+    const wd = WEEKDAYS[new Date(d.iso + "T00:00").getDay()];
+    row.innerHTML = `<span class="stat-label">${wd} ${fmtShort(d.iso)}</span><div class="stat-track"><div class="stat-fill"></div></div><span class="stat-count">${d.done}</span>`;
+    row.querySelector(".stat-fill").style.width = `${(d.done / max) * 100}%`;
+    chart.appendChild(row);
+  }
+
+  // Progreso por proyecto (los archivados no se listan).
+  const list = $("stats-projects");
+  list.innerHTML = "";
+  for (const p of store.projects) {
+    if (p.archived) continue;
+    const done = p.todos.filter((t) => t.done).length;
+    const total = p.todos.length;
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="todo-title"></span><div class="stat-track"><div class="stat-fill"></div></div><span class="stat-count"></span>`;
+    li.querySelector(".todo-title").textContent = p.name;
+    li.querySelector(".stat-fill").style.width = total ? `${(done / total) * 100}%` : "0";
+    li.querySelector(".stat-count").textContent = `${done}/${total}`;
+    list.appendChild(li);
+  }
+}
+
+$("menu-stats").addEventListener("click", () => {
+  renderStatsDialog();
+  openDialog("dlg-stats");
 });
 
 // --- Todoist (envía pendientes y trae las completadas allí) ---------------------------
@@ -776,16 +956,140 @@ $("scan-add").addEventListener("click", async () => {
     : "Nada que añadir");
 });
 
-// --- Modo oscuro (tinta clara sobre papel oscuro; se recuerda entre sesiones) ---------
+// --- Sonidos de interfaz ---------------------------------------------------------------
+//
+// Dos sonidos: «move» (navegar con Tab/flechas/jk) y «popup» (abrir un diálogo).
+// Se buscan en assets/sounds/ como move.(wav|mp3|ogg) y popup.(wav|mp3|ogg);
+// basta con soltar ahí los ficheros con esos nombres. Mientras no existan,
+// suena un clic sintetizado con WebAudio para no dejar la interfaz muda.
 
-function applyDark(on) {
-  document.body.classList.toggle("dark", on);
-  $("menu-dark").textContent = on ? "modo-claro" : "modo-oscuro";
-  localStorage.setItem("xietiao-dark", on ? "1" : "0");
+const SOUND_VOLUME = { move: 0.35, popup: 0.5 };
+const sounds = { move: null, popup: null }; // Audio cargado, "synth" o null (cargando)
+
+function initSound(name) {
+  const exts = ["wav", "mp3", "ogg"];
+  const tryNext = (i) => {
+    if (i >= exts.length) {
+      sounds[name] = "synth";
+      return;
+    }
+    const a = new Audio(`assets/sounds/${name}.${exts[i]}`);
+    a.preload = "auto";
+    a.volume = SOUND_VOLUME[name];
+    a.addEventListener("canplaythrough", () => { sounds[name] = a; }, { once: true });
+    a.addEventListener("error", () => tryNext(i + 1), { once: true });
+  };
+  tryNext(0);
 }
-$("menu-dark").addEventListener("click", () =>
-  applyDark(!document.body.classList.contains("dark")));
-applyDark(localStorage.getItem("xietiao-dark") === "1");
+initSound("move");
+initSound("popup");
+
+let audioCtx = null;
+
+/** Clic de repuesto generado con WebAudio (hasta que haya fichero de sonido). */
+function synthSound(name) {
+  try {
+    audioCtx ??= new AudioContext();
+    const t = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain).connect(audioCtx.destination);
+    if (name === "move") {
+      // Tic corto y seco, como una tecla.
+      osc.type = "square";
+      osc.frequency.value = 2200;
+      gain.gain.setValueAtTime(0.03, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.03);
+      osc.start(t);
+      osc.stop(t + 0.03);
+    } else {
+      // Pop suave de dos tonos al abrir un diálogo.
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(520, t);
+      osc.frequency.setValueAtTime(720, t + 0.07);
+      gain.gain.setValueAtTime(0.05, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+      osc.start(t);
+      osc.stop(t + 0.16);
+    }
+  } catch { /* sin audio, no pasa nada */ }
+}
+
+function playSound(name) {
+  const s = sounds[name];
+  if (s && s !== "synth") {
+    // Clonar permite que dos pulsaciones rápidas se solapen sin cortarse.
+    const a = s.cloneNode();
+    a.volume = SOUND_VOLUME[name];
+    a.play().catch(() => {});
+  } else {
+    synthSound(name);
+  }
+}
+
+// --- Tema (colores de papel y tinta; se recuerda entre sesiones) ----------------------
+//
+// Todo el estilo cuelga de dos colores: --paper (fondo) y --ink (texto). Los
+// tonos intermedios (--ink-dim, --ink-faint) se derivan mezclándolos, y la
+// clase .dark del body (grano del fondo, sombras) se decide por la luminosidad
+// del papel. Se aplican como estilo inline en <html> para pisar los del CSS.
+
+const THEME_PRESETS = {
+  claro: { paper: "#f6f1e5", ink: "#23211b" },
+  oscuro: { paper: "#201e19", ink: "#e6e0d0" },
+};
+
+/** Mezcla dos colores "#rrggbb": t=1 devuelve `a`, t=0 devuelve `b`. */
+function mixHex(a, b, t) {
+  const pa = a.match(/\w\w/g).map((x) => parseInt(x, 16));
+  const pb = b.match(/\w\w/g).map((x) => parseInt(x, 16));
+  return "#" + pa.map((v, i) =>
+    Math.round(v * t + pb[i] * (1 - t)).toString(16).padStart(2, "0")).join("");
+}
+
+function isDarkColor(hex) {
+  const [r, g, b] = hex.match(/\w\w/g).map((x) => parseInt(x, 16));
+  return (r * 299 + g * 587 + b * 114) / 1000 < 128;
+}
+
+function applyTheme(theme) {
+  const { paper, ink } = theme;
+  const root = document.documentElement.style;
+  root.setProperty("--paper", paper);
+  root.setProperty("--ink", ink);
+  root.setProperty("--ink-dim", mixHex(ink, paper, 0.5));
+  root.setProperty("--ink-faint", mixHex(ink, paper, 0.2));
+  document.body.classList.toggle("dark", isDarkColor(paper));
+  localStorage.setItem("xietiao-theme", JSON.stringify(theme));
+  $("theme-paper").value = paper;
+  $("theme-ink").value = ink;
+}
+
+function loadTheme() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("xietiao-theme"));
+    if (saved?.paper && saved?.ink) return saved;
+  } catch { /* sin tema guardado */ }
+  // Migración del antiguo interruptor de modo oscuro.
+  return localStorage.getItem("xietiao-dark") === "1"
+    ? THEME_PRESETS.oscuro
+    : THEME_PRESETS.claro;
+}
+
+function themeFromInputs() {
+  return { paper: $("theme-paper").value, ink: $("theme-ink").value };
+}
+
+$("menu-theme").addEventListener("click", () => openDialog("dlg-theme"));
+$("theme-paper").addEventListener("input", () => applyTheme(themeFromInputs()));
+$("theme-ink").addEventListener("input", () => applyTheme(themeFromInputs()));
+$("theme-swap").addEventListener("click", () => {
+  const t = themeFromInputs();
+  applyTheme({ paper: t.ink, ink: t.paper });
+});
+$("theme-light").addEventListener("click", () => applyTheme(THEME_PRESETS.claro));
+$("theme-dark").addEventListener("click", () => applyTheme(THEME_PRESETS.oscuro));
+applyTheme(loadTheme());
 
 // --- Proyectos: acciones ------------------------------------------------------------
 
@@ -884,6 +1188,14 @@ $("todo-date").addEventListener("change", (e) =>
     const v = e.target.value || null;
     call("set_todo_date", { project: ui.project, todo: ui.todo, date: v });
     setStatus(v ? `Tarea asignada a ${fmtShort(v)}` : "Fecha quitada de la tarea");
+  }));
+
+$("todo-time").addEventListener("change", (e) =>
+  withSelectedTodo(() => {
+    // NaiveTime espera segundos; el input da "HH:MM".
+    const v = e.target.value ? `${e.target.value}:00` : null;
+    call("set_todo_time", { project: ui.project, todo: ui.todo, time: v });
+    setStatus(v ? `Hora puesta a las ${e.target.value}` : "Hora quitada de la tarea");
   }));
 
 $("todo-nodate").addEventListener("click", () =>
@@ -1185,15 +1497,16 @@ document.addEventListener("keydown", (e) => {
       const n = FOCUS_ORDER.length;
       ui.focus = FOCUS_ORDER[(i + (e.shiftKey ? n - 1 : 1)) % n];
       renderFocus();
+      playSound("move");
       break;
     }
-    case "ArrowUp": case "k": stop(); moveSelection(-1); break;
-    case "ArrowDown": case "j": stop(); moveSelection(1); break;
+    case "ArrowUp": case "k": stop(); moveSelection(-1); playSound("move"); break;
+    case "ArrowDown": case "j": stop(); moveSelection(1); playSound("move"); break;
     case "ArrowLeft": case "h":
-      if (ui.focus === "calendar") { stop(); moveCalCursor(-1); }
+      if (ui.focus === "calendar") { stop(); moveCalCursor(-1); playSound("move"); }
       break;
     case "ArrowRight": case "l":
-      if (ui.focus === "calendar") { stop(); moveCalCursor(1); }
+      if (ui.focus === "calendar") { stop(); moveCalCursor(1); playSound("move"); }
       break;
     case "a": case "n":
       stop();
@@ -1225,6 +1538,7 @@ document.addEventListener("keydown", (e) => {
     case "p": $("todo-priority").click(); break;
     case "c": $("todo-recur").click(); break;
     case "s": $("todo-subtasks").click(); break;
+    case "i": $("todo-image").click(); break;
     case "m": $("todo-move").click(); break;
     case "v": $("timer-link-btn").click(); break;
     case "J":

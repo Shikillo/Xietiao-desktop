@@ -12,9 +12,12 @@ mod model;
 mod todoist;
 
 use std::collections::HashSet;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
-use chrono::{Local, NaiveDate};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use chrono::{Local, NaiveDate, NaiveTime, SecondsFormat, TimeZone, Utc};
 use tauri::State;
 
 use model::{PomodoroSession, Project, Recurrence, Store, Subtask, Todo, TrashItem, TrashKind};
@@ -152,6 +155,7 @@ fn complete_todo(p: &mut Project, todo: usize, today: NaiveDate) {
                 copy.completed_at = None;
                 copy.date = Some(next);
                 copy.todoist_id = None; // la nueva aparición aún no está en Todoist
+                copy.image = None; // ni comparte la imagen (evita borrados a medias)
                 for sub in &mut copy.subtasks {
                     sub.done = false;
                 }
@@ -214,11 +218,29 @@ fn cycle_recurrence(state: State<AppState>, project: usize, todo: usize) -> Stor
 }
 
 /// Asigna o quita la fecha de una tarea (`null` para quitarla).
+/// Sin fecha, la hora tampoco tiene sentido: se quita con ella.
 #[tauri::command]
 fn set_todo_date(state: State<AppState>, project: usize, todo: usize, date: Option<NaiveDate>) -> Store {
     with_store(&state, |s| {
         if let Some(t) = s.projects.get_mut(project).and_then(|p| p.todos.get_mut(todo)) {
             t.date = date;
+            if date.is_none() {
+                t.time = None;
+            }
+        }
+    })
+}
+
+/// Pone o quita la hora de una tarea. Ponerla en una tarea sin fecha le
+/// asigna la de hoy (una hora suelta no cabe en el calendario).
+#[tauri::command]
+fn set_todo_time(state: State<AppState>, project: usize, todo: usize, time: Option<NaiveTime>) -> Store {
+    with_store(&state, |s| {
+        if let Some(t) = s.projects.get_mut(project).and_then(|p| p.todos.get_mut(todo)) {
+            t.time = time;
+            if time.is_some() && t.date.is_none() {
+                t.date = Some(Local::now().date_naive());
+            }
         }
     })
 }
@@ -288,6 +310,68 @@ fn delete_subtask(state: State<AppState>, project: usize, todo: usize, subtask: 
     })
 }
 
+// --- Imagen adjunta del to-do -------------------------------------------------
+//
+// La imagen vive como fichero en `<config_dir>/xietiao/images/`; el modelo solo
+// guarda el nombre. El frontend la manda ya reescalada y codificada en JPEG.
+
+/// Directorio de imágenes adjuntas: `<config_dir>/xietiao/images/`.
+fn images_dir() -> PathBuf {
+    Store::config_dir().join("images")
+}
+
+/// Borra del disco la imagen adjunta de una tarea, si la hay.
+fn remove_image_file(name: &Option<String>) {
+    if let Some(n) = name {
+        let _ = fs::remove_file(images_dir().join(n));
+    }
+}
+
+/// Guarda la imagen (JPEG en base64) y la adjunta a la tarea, reemplazando
+/// la anterior si la había.
+#[tauri::command]
+fn set_todo_image(
+    state: State<AppState>,
+    project: usize,
+    todo: usize,
+    data: String,
+) -> Result<Store, String> {
+    let bytes = BASE64.decode(data).map_err(|e| e.to_string())?;
+    let dir = images_dir();
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let name = format!("img-{}.jpg", Local::now().format("%Y%m%d-%H%M%S%.3f"));
+    fs::write(dir.join(&name), bytes).map_err(|e| e.to_string())?;
+    Ok(with_store(&state, |s| {
+        if let Some(t) = s.projects.get_mut(project).and_then(|p| p.todos.get_mut(todo)) {
+            remove_image_file(&t.image); // la anterior ya no se referencia
+            t.image = Some(name);
+        } else {
+            let _ = fs::remove_file(dir.join(&name)); // índice inválido: sin huérfanos
+        }
+    }))
+}
+
+/// Quita la imagen de la tarea y borra su fichero.
+#[tauri::command]
+fn clear_todo_image(state: State<AppState>, project: usize, todo: usize) -> Store {
+    with_store(&state, |s| {
+        if let Some(t) = s.projects.get_mut(project).and_then(|p| p.todos.get_mut(todo)) {
+            remove_image_file(&t.image);
+            t.image = None;
+        }
+    })
+}
+
+/// Devuelve una imagen adjunta como data URL, lista para un `<img>`.
+#[tauri::command]
+fn get_todo_image(name: String) -> Result<String, String> {
+    if name.contains(['/', '\\']) || name.contains("..") {
+        return Err("nombre de imagen no válido".into());
+    }
+    let bytes = fs::read(images_dir().join(&name)).map_err(|e| e.to_string())?;
+    Ok(format!("data:image/jpeg;base64,{}", BASE64.encode(bytes)))
+}
+
 // --- Notas ------------------------------------------------------------------
 
 /// Guarda notas: generales si `project` es `null`, del proyecto si no.
@@ -333,7 +417,12 @@ fn restore_trash(state: State<AppState>, item: usize) -> Store {
 fn purge_trash(state: State<AppState>, item: usize) -> Store {
     with_store(&state, |s| {
         if item < s.trash.len() {
-            s.trash.remove(item);
+            // Al eliminar definitivamente, sus imágenes adjuntas también.
+            let entry = s.trash.remove(item);
+            match &entry.kind {
+                TrashKind::Project(p) => p.todos.iter().for_each(|t| remove_image_file(&t.image)),
+                TrashKind::Todo { todo, .. } => remove_image_file(&todo.image),
+            }
         }
     })
 }
@@ -408,6 +497,14 @@ async fn todoist_export(state: State<'_, AppState>) -> Result<TodoistOutcome, St
                     project_name: p.name.clone(),
                     content: t.title.clone(),
                     due_date: t.date.map(|d| d.to_string()),
+                    // Con hora, Todoist quiere un RFC3339 en UTC.
+                    due_datetime: match (t.date, t.time) {
+                        (Some(d), Some(tm)) => Local
+                            .from_local_datetime(&d.and_time(tm))
+                            .earliest()
+                            .map(|l| l.with_timezone(&Utc).to_rfc3339_opts(SecondsFormat::Secs, true)),
+                        _ => None,
+                    },
                     priority: todoist::priority(t.priority),
                     labels: t.tags.clone(),
                 });
@@ -485,6 +582,7 @@ async fn todoist_export(state: State<'_, AppState>) -> Result<TodoistOutcome, St
         };
         let mut todo = Todo::new(inc.content);
         todo.date = inc.due_date;
+        todo.time = inc.due_time;
         todo.priority = inc.priority;
         todo.tags = inc.labels.into_iter().map(|l| l.to_lowercase()).collect();
         todo.todoist_id = Some(inc.todoist_id);
@@ -521,11 +619,15 @@ fn main() {
             cycle_priority,
             cycle_recurrence,
             set_todo_date,
+            set_todo_time,
             move_todo,
             move_todo_to_project,
             add_subtask,
             toggle_subtask,
             delete_subtask,
+            set_todo_image,
+            clear_todo_image,
+            get_todo_image,
             set_notes,
             restore_trash,
             purge_trash,

@@ -7,10 +7,14 @@ Versión de escritorio de [Xietiao](https://github.com/Shikillo/Xietiao) (el das
 ## Qué incluye
 
 - **Proyectos** — crear, renombrar, reordenar y borrar (a la papelera).
-- **To-dos** — con `#tags`, prioridad cíclica (`!`, `!!`, `!!!`), recurrencia (diaria/semanal/mensual con regeneración automática al completar), fechas, subtareas tabuladas bajo su tarea y búsqueda.
+- **To-dos** — con `#tags`, prioridad cíclica (`!`, `!!`, `!!!`), recurrencia (diaria/semanal/mensual con regeneración automática al completar), fechas y horas (la agenda del día se ordena por hora), subtareas tabuladas bajo su tarea y búsqueda.
 - **Calendario** — vista mensual con carga por día; la agenda de un día se abre como popup al clicarlo (si tiene tareas).
 - **Notas** — generales o por proyecto, con autoguardado.
 - **Pomodoro** — temporizador 25/5 con vinculación a tareas y registro de focos; reloj y cronómetro.
+- **Imágenes** — cada to-do puede llevar una imagen adjunta (botón «imagen» o
+  tecla `i`): se ve en un popup y en la lista aparece el indicador `▣`. Los
+  ficheros se guardan reescalados como JPEG en `<config_dir>/xietiao/images/`
+  (sólo local: la sincronización con Todoist no los envía).
 - **Papelera** — restaurar o purgar proyectos y tareas borradas.
 - **Escanear papel** — el enlace «escanear» de la línea de estado captura con la
   cámara una lista escrita con casillas `- [ ]` y añade las líneas con casilla
@@ -18,9 +22,20 @@ Versión de escritorio de [Xietiao](https://github.com/Shikillo/Xietiao) (el das
   lista de confirmación editable. El OCR
   ([tesseract.js](https://tesseract.projectnaptha.com/), español) corre en local
   y sin conexión; funciona mejor con texto impreso que manuscrito.
-- **Modo oscuro** — tinta clara sobre papel oscuro, se recuerda entre sesiones.
+- **Tema** — el enlace «tema» de la línea de estado abre un popup para elegir
+  los dos colores de la interfaz (papel y tinta), con presets claro/oscuro y
+  botón para intercambiarlos; los tonos intermedios se derivan solos y la
+  elección se recuerda entre sesiones.
+- **Estadísticas** — el enlace «estadísticas» de la línea de estado abre un
+  resumen con las tareas y pomodoros de hoy y de los últimos 7 días (con
+  gráfico de barras), la racha de días completando tareas y el progreso por
+  proyecto.
+- **Sonidos de interfaz** — un clic al navegar con `Tab`/flechas y otro al
+  abrirse un diálogo. Se personalizan soltando `move.*` y `popup.*`
+  (wav/mp3/ogg) en `src/assets/sounds/`; sin ficheros suena un clic
+  sintetizado con WebAudio.
 - **Todoist** — sincronización: las tareas pendientes se envían a Todoist
-  (proyecto homónimo, fecha, prioridad y `#tags`), cada una una sola vez, y las
+  (proyecto homónimo, fecha —con hora si la tiene—, prioridad y `#tags`), cada una una sola vez, y las
   que completes en Todoist se marcan como hechas también aquí (recurrencia
   incluida; borrarlas allí no las completa). Se lanza desde el enlace
   «sincronizar» de la línea de estado o desde el diálogo de Todoist; basta con
@@ -37,9 +52,12 @@ Puedes alternar entre la TUI y la app de escritorio con los mismos datos.
 > Nota: si tienes ambas abiertas a la vez, la última en guardar gana.
 
 > Nota: la integración con Todoist añade dos campos al modelo (`todoist_token` y
-> el `todoist_id` de cada tarea). La TUI los incluye desde su versión 0.2.0; si
-> usas una TUI anterior junto a esta app, al guardar los descartaría (perderías
-> el token y se duplicarían tareas al re-exportar), así que actualízala.
+> el `todoist_id` de cada tarea), las imágenes adjuntas añaden otro (`image`)
+> y las horas otro (`time`).
+> La TUI incluye los de Todoist desde su versión 0.2.0; si usas una TUI que no
+> conozca alguno de estos campos junto a esta app, al guardar los descartaría
+> (perderías el token, se duplicarían tareas al re-exportar y las tareas
+> olvidarían su imagen), así que actualízala.
 
 ## Arquitectura
 

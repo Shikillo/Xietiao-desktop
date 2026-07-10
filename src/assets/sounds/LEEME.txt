@@ -1,0 +1,10 @@
+Sonidos de interfaz de Xietiao.
+
+Suelta aquí dos ficheros con estos nombres (vale .wav, .mp3 u .ogg;
+se prueban en ese orden):
+
+  move.wav    → clic al navegar con Tab / flechas / j k
+  popup.wav   → al abrirse un diálogo (agenda, ayuda, papelera…)
+
+Mientras no existan, la app usa un clic sintetizado (WebAudio) como
+relleno. El volumen base se ajusta en SOUND_VOLUME, en src/app.js.

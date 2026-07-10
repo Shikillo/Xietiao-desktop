@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use chrono::{Datelike, Duration, NaiveDate};
+use chrono::{Datelike, Duration, NaiveDate, NaiveTime};
 use serde::{Deserialize, Serialize};
 
 /// Prioridad de una tarea.
@@ -129,6 +129,9 @@ pub struct Todo {
     /// Día al que está asignada la tarea, si tiene uno.
     #[serde(default)]
     pub date: Option<NaiveDate>,
+    /// Hora del día asignado, si la tiene (sólo con fecha).
+    #[serde(default)]
+    pub time: Option<NaiveTime>,
     /// Prioridad de la tarea.
     #[serde(default)]
     pub priority: Priority,
@@ -147,6 +150,9 @@ pub struct Todo {
     /// Id de la tarea en Todoist, si ya se exportó (para no duplicarla).
     #[serde(default)]
     pub todoist_id: Option<String>,
+    /// Nombre del fichero de la imagen adjunta, en `<config_dir>/xietiao/images/`.
+    #[serde(default)]
+    pub image: Option<String>,
 }
 
 impl Todo {
@@ -155,12 +161,14 @@ impl Todo {
             title: title.into(),
             done: false,
             date: None,
+            time: None,
             priority: Priority::None,
             subtasks: Vec::new(),
             tags: Vec::new(),
             recurrence: Recurrence::None,
             completed_at: None,
             todoist_id: None,
+            image: None,
         }
     }
 
