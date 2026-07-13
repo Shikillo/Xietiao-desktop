@@ -12,7 +12,12 @@ Versión de escritorio de [Xietiao](https://github.com/Shikillo/Xietiao) (el das
 - **Proyectos** — crear, renombrar, reordenar y borrar (a la papelera).
 - **To-dos** — con `#tags`, prioridad cíclica (`!`, `!!`, `!!!`), recurrencia (diaria/semanal/mensual con regeneración automática al completar), fechas y horas (la agenda del día se ordena por hora), subtareas tabuladas bajo su tarea y búsqueda.
 - **Calendario** — vista mensual con carga por día; la agenda de un día se abre como popup al clicarlo (si tiene tareas).
-- **Notas** — generales o por proyecto, con autoguardado.
+- **Notas** — en **markdown** (títulos, listas, casillas `- [ ]` marcables
+  desde la vista, negrita/cursiva, código, citas y enlaces, que se abren en el
+  navegador): se ven renderizadas y un clic (o `e`/`Enter`) pasa a editar el
+  texto. Un desplegable elige entre las generales y las de cualquier proyecto
+  (las de proyecto siguen a la selección; `g` alterna generales ↔ proyecto).
+  Con autoguardado, como siempre.
 - **Pomodoro** — temporizador 25/5 con vinculación a tareas y registro de focos; reloj y cronómetro.
 - **Imágenes** — cada to-do puede llevar una imagen adjunta (botón «imagen» o
   tecla `i`): se ve en un popup y en la lista aparece el indicador `▣`. Los
@@ -30,6 +35,13 @@ Versión de escritorio de [Xietiao](https://github.com/Shikillo/Xietiao) (el das
   lista de confirmación editable. El OCR
   ([tesseract.js](https://tesseract.projectnaptha.com/), español) corre en local
   y sin conexión; funciona mejor con texto impreso que manuscrito.
+- **Boceto** — el icono «boceto» del menú de ajustes abre una pizarra
+  [Excalidraw](https://excalidraw.com) que cubre la columna de proyectos y
+  to-dos (como el visor de documentos cubre las notas). Funciona sin conexión
+  (la librería va vendorizada en `src/assets/excalidraw/`, ~5,5 MB), sigue el
+  tema claro/oscuro de la app y la escena se guarda sola en
+  `<config_dir>/xietiao/sketch.excalidraw`. Con la pizarra abierta el teclado
+  es suyo (los atajos de la app se pausan); se cierra con el ✕ o con `Escape`.
 - **Tema** — el icono «tema» del menú de ajustes abre un popup para elegir
   los dos colores de la interfaz (papel y tinta), con presets claro/oscuro y
   botón para intercambiarlos; los tonos intermedios se derivan solos y la

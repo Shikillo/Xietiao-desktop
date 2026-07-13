@@ -472,6 +472,35 @@ fn delete_doc(name: String) -> Result<Vec<String>, String> {
     Ok(list_docs())
 }
 
+// --- Boceto (pizarra Excalidraw) ---------------------------------------------
+//
+// Un único lienzo global; la escena se guarda tal cual (JSON de Excalidraw)
+// en <config_dir>/xietiao/sketch.excalidraw.
+
+fn sketch_path() -> PathBuf {
+    Store::config_dir().join("sketch.excalidraw")
+}
+
+/// Devuelve la escena guardada, o cadena vacía si aún no hay boceto.
+#[tauri::command]
+async fn get_sketch() -> Result<String, String> {
+    match fs::read_to_string(sketch_path()) {
+        Ok(s) => Ok(s),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Guarda la escena del boceto (JSON serializado por Excalidraw).
+#[tauri::command]
+async fn set_sketch(data: String) -> Result<(), String> {
+    let path = sketch_path();
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    fs::write(&path, data).map_err(|e| e.to_string())
+}
+
 // --- Notas ------------------------------------------------------------------
 
 /// Guarda notas: generales si `project` es `null`, del proyecto si no.
@@ -765,6 +794,24 @@ async fn todoist_export(state: State<'_, AppState>) -> Result<TodoistOutcome, St
     })
 }
 
+/// Abre un enlace (solo http/https) en el navegador del sistema; lo usan los
+/// enlaces markdown de las notas, que no deben navegar dentro del webview.
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err("solo se abren enlaces http(s)".into());
+    }
+    #[cfg(target_os = "macos")]
+    let cmd = "open";
+    #[cfg(not(target_os = "macos"))]
+    let cmd = "xdg-open";
+    std::process::Command::new(cmd)
+        .arg(&url)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Cierra la aplicación (atajo `q`, como en la TUI).
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
@@ -800,12 +847,15 @@ fn main() {
             add_doc,
             get_doc,
             delete_doc,
+            get_sketch,
+            set_sketch,
             set_notes,
             restore_trash,
             purge_trash,
             record_pomodoro,
             set_todoist_token,
             todoist_export,
+            open_url,
             quit_app,
         ])
         .run(tauri::generate_context!())

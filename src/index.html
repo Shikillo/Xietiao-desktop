@@ -57,6 +57,21 @@
           </div>
         </section>
 
+        <!-- visor de boceto: cubre la columna entera (proyectos + to-dos)
+             deslizándose desde abajo, como el visor de documentos sobre las
+             notas. Dentro va la pizarra Excalidraw (vendorizada, se carga
+             perezosamente la primera vez que se abre). -->
+        <div id="sketch-viewer">
+          <div id="sketch-panel" class="block">
+            <span class="block-title">boceto</span>
+            <div class="add-row" id="sketch-head">
+              <span class="dimmed" id="sketch-status"></span>
+              <button class="btn" id="sketch-close" title="cerrar el boceto">✕</button>
+            </div>
+            <div id="sketch-board"></div>
+          </div>
+        </div>
+
       </div>
 
       <div id="col-right">
@@ -121,10 +136,12 @@
           <section class="block" id="blk-notes">
             <span class="block-title">notas</span>
             <div class="add-row">
-              <label class="radio-label"><input type="radio" id="notes-general" name="notes-scope" checked /> generales</label>
-              <label class="radio-label"><input type="radio" id="notes-project" name="notes-scope" /> <span id="notes-project-label">del proyecto</span></label>
+              <select id="notes-scope" title="qué notas se ven (g alterna generales ↔ proyecto)"></select>
             </div>
-            <textarea id="notes-text" spellcheck="false"></textarea>
+            <!-- Las notas son markdown: se ven renderizadas (#notes-md) y un
+                 clic (o e/Enter) cambia al textarea para editar el texto. -->
+            <div id="notes-md"></div>
+            <textarea id="notes-text" class="hidden" spellcheck="false"></textarea>
             <!-- visor de documentos: cubre el bloque de notas deslizándose desde
                  abajo; el contenedor exterior solo recorta durante la animación. -->
             <div id="doc-viewer">
@@ -160,6 +177,9 @@
             </button>
             <button class="tray-btn" id="menu-docs" title="documentos">
               <span class="icon" style="--icon: url('assets/icons/docker.svg')"></span>
+            </button>
+            <button class="tray-btn" id="menu-sketch" title="boceto">
+              <span class="icon" style="--icon: url('assets/icons/boceto.svg')"></span>
             </button>
           </div>
         </div>

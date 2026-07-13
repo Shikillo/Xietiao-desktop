@@ -15,6 +15,7 @@ const ui = {
   todo: null,        // índice real del to-do seleccionado dentro de project.todos
   search: "",
   notesScope: "general", // "general" | "project"
+  notesProject: 0,       // proyecto cuyas notas se ven cuando notesScope = "project"
   calYear: 0,
   calMonth: 0,       // 1..12
   selDate: null,     // "YYYY-MM-DD"
@@ -73,6 +74,11 @@ function currentProject() {
   return store.projects[ui.project] ?? null;
 }
 
+/** Con notas de proyecto a la vista, siguen al proyecto seleccionado. */
+function notesFollow() {
+  if (ui.notesScope === "project") ui.notesProject = ui.project;
+}
+
 function selectedTodo() {
   const p = currentProject();
   return p && ui.todo !== null ? p.todos[ui.todo] ?? null : null;
@@ -104,6 +110,7 @@ function renderProjects() {
     li.addEventListener("click", () => {
       ui.project = i;
       ui.todo = null;
+      notesFollow();
       renderAll();
     });
     list.appendChild(li);
@@ -282,6 +289,7 @@ function renderAgenda() {
       ui.project = pi;
       ui.todo = ti;
       ui.focus = "todos";
+      notesFollow();
       renderAll();
     });
     list.appendChild(li);
@@ -289,13 +297,89 @@ function renderAgenda() {
 }
 
 function renderNotes() {
-  const p = currentProject();
-  $("notes-project-label").textContent = p ? `de «${p.name}»` : "del proyecto";
-  $("notes-project").disabled = !p;
-  const scope = ui.notesScope === "project" && p ? "project" : "general";
-  const text = scope === "project" ? p.notes : store.notes;
+  // Desplegable: «generales» + un asiento por proyecto (no archivado); los
+  // nombres pueden cambiar, así que se repuebla en cada render.
+  const sel = $("notes-scope");
+  sel.innerHTML = "";
+  sel.add(new Option("notas generales", "general"));
+  store.projects.forEach((p, i) => {
+    if (!p.archived) sel.add(new Option(`de «${p.name}»`, String(i)));
+  });
+  const seen = store.projects[ui.notesProject];
+  if (ui.notesScope === "project" && (!seen || seen.archived)) {
+    ui.notesScope = "general"; // el proyecto visto ya no existe (o está en la papelera)
+  }
+  sel.value = ui.notesScope === "project" ? String(ui.notesProject) : "general";
+  const text = notesSource();
   const area = $("notes-text");
-  if (document.activeElement !== area) area.value = text;
+  if (document.activeElement !== area) {
+    area.value = text;
+    renderNotesMd(text);
+  }
+}
+
+/** Texto fuente de las notas a la vista. */
+function notesSource() {
+  return ui.notesScope === "project" ? store.projects[ui.notesProject].notes : store.notes;
+}
+
+// --- Notas: markdown ---------------------------------------------------------------
+//
+// Renderizador mínimo, línea a línea: títulos (# ## ###), listas (-, *, 1.),
+// casillas (- [ ] / - [x], marcables desde la vista), negrita/cursiva/tachado,
+// código en línea y en bloque (```), citas (>), separadores (---) y enlaces
+// [texto](url), que se abren en el navegador (command open_url). El texto se
+// escapa siempre: solo se inyectan las etiquetas propias, nunca HTML del usuario.
+
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function mdInline(s) {
+  return escapeHtml(s)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+    .replace(/~~([^~]+)~~/g, "<s>$1</s>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" title="$2">$1</a>');
+}
+
+function renderNotesMd(text) {
+  const out = [];
+  let list = null;  // "ul" | "ol" abierta
+  let code = false; // dentro de bloque ```
+  const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  const openList = (kind) => {
+    if (list !== kind) { closeList(); out.push(`<${kind}>`); list = kind; }
+  };
+  text.split("\n").forEach((raw, n) => {
+    if (code) {
+      if (/^```/.test(raw)) { out.push("</code></pre>"); code = false; }
+      else out.push(escapeHtml(raw) + "\n");
+      return;
+    }
+    let m;
+    if (/^```/.test(raw)) { closeList(); out.push("<pre><code>"); code = true; }
+    else if ((m = raw.match(/^(#{1,3}) +(.*)/))) {
+      closeList();
+      out.push(`<h${m[1].length}>${mdInline(m[2])}</h${m[1].length}>`);
+    } else if (/^\s*(---+|\*\*\*+)\s*$/.test(raw)) { closeList(); out.push("<hr>"); }
+    else if ((m = raw.match(/^> ?(.*)/))) { closeList(); out.push(`<blockquote>${mdInline(m[1])}</blockquote>`); }
+    else if ((m = raw.match(/^\s*[-*] \[([ xX])\] +(.*)/))) {
+      // Casilla: data-line señala la línea fuente para poder alternarla al clicar.
+      openList("ul");
+      const done = m[1] !== " ";
+      out.push(`<li class="md-task${done ? " done" : ""}" data-line="${n}">` +
+        `<span class="md-check">[${done ? "x" : " "}]</span> ${mdInline(m[2])}</li>`);
+    } else if ((m = raw.match(/^\s*[-*] +(.*)/))) { openList("ul"); out.push(`<li>${mdInline(m[1])}</li>`); }
+    else if ((m = raw.match(/^\s*\d+[.)] +(.*)/))) { openList("ol"); out.push(`<li>${mdInline(m[1])}</li>`); }
+    else if (raw.trim() === "") closeList();
+    else { closeList(); out.push(`<p>${mdInline(raw)}</p>`); }
+  });
+  if (code) out.push("</code></pre>");
+  closeList();
+  $("notes-md").innerHTML = out.join("") ||
+    '<p class="dimmed">vacío — clic para escribir (admite markdown)</p>';
 }
 
 // Tira de relojes: subtítulo del pomodoro ("foco · N hoy") y hora actual.
@@ -1181,6 +1265,111 @@ function closeDocViewer() {
 
 $("doc-view-close").addEventListener("click", closeDocViewer);
 
+// --- Boceto (pizarra Excalidraw) ---------------------------------------------------------
+//
+// El icono «boceto» de la bandeja abre una pizarra Excalidraw que cubre la
+// columna izquierda (proyectos y to-dos), como el visor de documentos cubre
+// las notas. La librería va vendorizada (React UMD + bundle de Excalidraw en
+// assets/excalidraw/) y se carga perezosamente al abrir por primera vez; la
+// escena se guarda sola (1 s tras el último cambio, y al cerrar) mediante los
+// commands get_sketch/set_sketch.
+
+let sketchRoot = null;      // raíz de React montada en #sketch-board (null = sin cargar)
+let sketchAPI = null;       // excalidrawAPI, para leer la escena al guardar
+let sketchLoading = null;   // promesa de carga de los scripts (solo se cargan una vez)
+let sketchInitial = null;   // escena guardada, para el primer render
+let sketchSaveTimer = null; // debounce del autoguardado
+let sketchDirty = false;    // hay cambios sin guardar
+
+function sketchOpen() {
+  return $("sketch-viewer").classList.contains("open");
+}
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error(`no se pudo cargar ${src}`));
+    document.head.appendChild(s);
+  });
+}
+
+function loadExcalidraw() {
+  sketchLoading ??= (async () => {
+    // Fuentes, locales y el chunk vendor se resuelven contra esta base.
+    window.EXCALIDRAW_ASSET_PATH = new URL("assets/excalidraw/", location.href).href;
+    await loadScript("assets/excalidraw/react.production.min.js");
+    await loadScript("assets/excalidraw/react-dom.production.min.js");
+    await loadScript("assets/excalidraw/excalidraw.production.min.js");
+  })();
+  return sketchLoading;
+}
+
+/** (Re)pinta la pizarra; tras el montaje inicial solo cambia el tema. */
+function renderSketch() {
+  sketchRoot.render(React.createElement(ExcalidrawLib.Excalidraw, {
+    initialData: sketchInitial,
+    langCode: "es-ES",
+    theme: document.body.classList.contains("dark") ? "dark" : "light",
+    excalidrawAPI: (api) => { sketchAPI = api; },
+    onChange: () => {
+      sketchDirty = true;
+      clearTimeout(sketchSaveTimer);
+      sketchSaveTimer = setTimeout(saveSketch, 1000);
+    },
+  }));
+}
+
+/** Sigue el tema de la app (la llama applyTheme si la pizarra está montada). */
+function updateSketchTheme() {
+  if (sketchRoot) renderSketch();
+}
+
+async function saveSketch() {
+  clearTimeout(sketchSaveTimer);
+  if (!sketchAPI || !sketchDirty) return;
+  sketchDirty = false;
+  try {
+    const data = ExcalidrawLib.serializeAsJSON(
+      sketchAPI.getSceneElements(), sketchAPI.getAppState(), sketchAPI.getFiles(), "local");
+    await invoke("set_sketch", { data });
+  } catch (e) {
+    sketchDirty = true; // reintentará en el próximo cambio o al cerrar
+    setStatus(`Error guardando el boceto: ${e}`);
+  }
+}
+
+async function openSketch() {
+  if (sketchOpen()) return closeSketch(); // el icono de la bandeja alterna
+  $("sketch-viewer").classList.add("open");
+  playSound("popup");
+  if (sketchRoot) return;
+  $("sketch-status").textContent = "cargando pizarra…";
+  try {
+    await loadExcalidraw();
+    const raw = await invoke("get_sketch");
+    if (raw) sketchInitial = { ...JSON.parse(raw), scrollToContent: true };
+    sketchRoot = ReactDOM.createRoot($("sketch-board"));
+    renderSketch();
+    $("sketch-status").textContent = "";
+  } catch (e) {
+    $("sketch-status").textContent = "";
+    setStatus(`Error: ${e}`);
+    closeSketch();
+  }
+}
+
+function closeSketch() {
+  if (!sketchOpen()) return;
+  saveSketch(); // sin esperar al debounce
+  $("sketch-viewer").classList.remove("open");
+  playSound("popup-close");
+}
+
+$("menu-sketch").addEventListener("click", openSketch);
+$("sketch-close").addEventListener("click", closeSketch);
+
 // --- Sonidos de interfaz ---------------------------------------------------------------
 //
 // Cada sonido lógico apunta a un fichero de assets/sounds/ (se prueban varios
@@ -1313,6 +1502,7 @@ function applyTheme(theme) {
   localStorage.setItem("garita-theme", JSON.stringify(theme));
   $("theme-paper").value = paper;
   $("theme-ink").value = ink;
+  updateSketchTheme(); // la pizarra, si está montada, sigue al tema
 }
 
 function loadTheme() {
@@ -1379,6 +1569,7 @@ async function addProject() {
   playSound("add-edit");
   ui.project = store.projects.length - 1;
   ui.todo = null;
+  notesFollow();
   renderAll();
   setStatus(`Proyecto «${v}» creado`);
 }
@@ -1409,6 +1600,7 @@ $("project-up").addEventListener("click", async () => {
     const target = ui.project - 1;
     await call("move_project", { project: ui.project, delta: -1 });
     ui.project = target;
+    notesFollow();
     renderAll();
   }
 });
@@ -1417,6 +1609,7 @@ $("project-down").addEventListener("click", async () => {
     const target = ui.project + 1;
     await call("move_project", { project: ui.project, delta: 1 });
     ui.project = target;
+    notesFollow();
     renderAll();
   }
 });
@@ -1571,14 +1764,63 @@ $("cal-assign").addEventListener("click", () =>
 let notesTimer = null;
 $("notes-text").addEventListener("input", () => {
   clearTimeout(notesTimer);
+  // Alcance y texto capturados al teclear: si el usuario cambia de notas antes
+  // de que salte el temporizador, lo pendiente se guarda donde tocaba.
+  const scope = ui.notesScope === "project" ? ui.notesProject : null;
+  const text = $("notes-text").value;
   notesTimer = setTimeout(() => {
-    const scope = ui.notesScope === "project" && currentProject() ? ui.project : null;
-    call("set_notes", { project: scope, text: $("notes-text").value });
+    call("set_notes", { project: scope, text });
     setStatus("Notas guardadas");
   }, 600);
 });
-$("notes-general").addEventListener("change", () => { ui.notesScope = "general"; renderNotes(); });
-$("notes-project").addEventListener("change", () => { ui.notesScope = "project"; renderNotes(); });
+
+$("notes-scope").addEventListener("change", () => {
+  const v = $("notes-scope").value;
+  ui.notesScope = v === "general" ? "general" : "project";
+  if (v !== "general") ui.notesProject = Number(v);
+  renderNotes();
+});
+
+/** Cambia la vista renderizada por el textarea y lo enfoca. */
+function editNotes() {
+  $("notes-md").classList.add("hidden");
+  const area = $("notes-text");
+  area.classList.remove("hidden");
+  area.focus({ preventScroll: true });
+}
+
+// Al salir del textarea (blur, Escape ya desenfoca) se vuelve a la vista.
+$("notes-text").addEventListener("blur", () => {
+  renderNotesMd($("notes-text").value);
+  $("notes-text").classList.add("hidden");
+  $("notes-md").classList.remove("hidden");
+});
+
+$("notes-md").addEventListener("click", async (e) => {
+  const link = e.target.closest("a[href]");
+  if (link) {
+    e.preventDefault();
+    try { await invoke("open_url", { url: link.href }); }
+    catch (err) { setStatus(`Error: ${err}`); }
+    return;
+  }
+  const check = e.target.closest(".md-check");
+  if (check) {
+    // Alternar la casilla directamente sobre la línea del texto fuente.
+    const n = Number(check.parentElement.dataset.line);
+    const lines = notesSource().split("\n");
+    lines[n] = /\[ \]/.test(lines[n])
+      ? lines[n].replace("[ ]", "[x]")
+      : lines[n].replace(/\[[xX]\]/, "[ ]");
+    const text = lines.join("\n");
+    playSound("complete");
+    $("notes-text").value = text;
+    renderNotesMd(text);
+    call("set_notes", { project: ui.notesScope === "project" ? ui.notesProject : null, text });
+    return;
+  }
+  editNotes();
+});
 
 // --- Pomodoro ------------------------------------------------------------------------
 
@@ -1738,6 +1980,7 @@ function moveSelection(delta) {
     if (len === 0) return;
     ui.project = Math.min(Math.max(ui.project + delta, 0), len - 1);
     ui.todo = null;
+    notesFollow();
     renderAll();
   } else if (ui.focus === "todos") {
     const vis = visibleTodoIndices();
@@ -1763,6 +2006,17 @@ document.addEventListener("keydown", (e) => {
       else if (e.key === "n") closeDialogs();
     }
     return; // (Escape ya cierra desde el otro listener)
+  }
+
+  // Con el boceto abierto el teclado es de la pizarra: no interceptamos nada
+  // (j/k/d/… deben dibujar, no navegar la app). Escape cierra el visor, salvo
+  // dentro del lienzo, donde Excalidraw lo usa (deseleccionar, salir de texto).
+  if (sketchOpen()) {
+    if (e.key === "Escape" &&
+        !(e.target instanceof Element && e.target.closest("#sketch-board"))) {
+      closeSketch();
+    }
+    return;
   }
 
   const el = document.activeElement;
@@ -1871,7 +2125,7 @@ document.addEventListener("keydown", (e) => {
       stop();
       if (ui.focus === "projects") $("project-rename").click();
       else if (ui.focus === "todos") openEditTodo();
-      else if (ui.focus === "notes") $("notes-text").focus();
+      else if (ui.focus === "notes") editNotes();
       break;
     case "d":
       if (ui.focus === "projects") $("project-delete").click();
@@ -1886,7 +2140,7 @@ document.addEventListener("keydown", (e) => {
         if (ui.clockSel === 0) $("timer-toggle").click();
         else if (ui.clockSel === 2) $("stopwatch-toggle").click();
       } else if (ui.focus === "notes") {
-        $("notes-text").focus();
+        editNotes();
       }
       break;
     case "f": $("cal-assign").click(); break;
@@ -1906,8 +2160,8 @@ document.addEventListener("keydown", (e) => {
       break;
     case "/": stop(); $("todo-search").focus(); break;
     case "g":
-      ui.notesScope = ui.notesScope === "general" ? "project" : "general";
-      $(ui.notesScope === "general" ? "notes-general" : "notes-project").checked = true;
+      ui.notesScope = ui.notesScope === "general" && currentProject() ? "project" : "general";
+      notesFollow();
       renderNotes();
       break;
     case "t": $("cal-today").click(); break;
